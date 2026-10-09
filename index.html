@@ -1,0 +1,125 @@
+<!DOCTYPE html>
+<html lang="es"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Mscan – Carta QR</title>
+<style>
+:root{--bg:#faf7f2;--fg:#222;--card:#fff;--mut:#777;--ac:#c2410c;--ok:#15803d;--bd:#e5ded3}
+@media(prefers-color-scheme:dark){:root{--bg:#1b1917;--fg:#f1ece4;--card:#272422;--mut:#a39d94;--ac:#fb923c;--ok:#4ade80;--bd:#3a3631}}
+*{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--fg);font:16px system-ui,sans-serif}
+.w{max-width:640px;margin:0 auto;padding:14px 14px 120px}
+h1{font-size:22px;margin:6px 0}h2{font-size:16px;margin:18px 0 8px;color:var(--mut);text-transform:uppercase;letter-spacing:.05em}
+.c{background:var(--card);border:1px solid var(--bd);border-radius:12px;padding:12px;margin-bottom:8px}
+.r{display:flex;align-items:center;justify-content:space-between;gap:10px}
+.m{color:var(--mut);font-size:14px}
+button,.b{font:inherit;border:0;border-radius:10px;padding:10px 14px;background:var(--ac);color:#fff;cursor:pointer;text-decoration:none;display:inline-block}
+button.s,.b.s{background:var(--card);color:var(--fg);border:1px solid var(--bd)}button.ok{background:var(--ok);color:#fff}
+.q{display:flex;align-items:center;gap:8px}.q button{padding:4px 12px}
+.bar{position:fixed;left:0;right:0;bottom:0;background:var(--card);border-top:1px solid var(--bd);padding:10px 14px calc(10px + env(safe-area-inset-bottom,0px))}
+.bar .in{max-width:640px;margin:0 auto;display:flex;gap:8px}.bar button{flex:1}
+input,textarea{width:100%;font:inherit;padding:10px;border-radius:10px;border:1px solid var(--bd);background:var(--bg);color:var(--fg);margin-bottom:8px}
+.al{border-color:#dc2626;background:rgba(220,38,38,.12)}.tag{font-size:12px;padding:2px 8px;border-radius:99px;background:var(--bd)}
+.cols{display:grid;gap:12px}@media(min-width:760px){.w.p{max-width:1000px}.cols{grid-template-columns:1fr 1fr}}
+</style></head><body><div class="w" id="app"></div>
+<script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-app-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-auth-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore-compat.js"></script>
+<script>
+// ====== 1) PEGÁ ACÁ LOS DATOS DE TU FIREBASE (paso 3 de la guía) ======
+const firebaseConfig={
+  apiKey:"AIzaSyCW0Pkna9ecGzCPUohvHAaZ2dix3vkX3fw",
+  authDomain:"mscan-7d99e.firebaseapp.com",
+  projectId:"mscan-7d99e",
+  storageBucket:"mscan-7d99e.firebasestorage.app",
+  messagingSenderId:"969669306616",
+  appId:"1:969669306616:web:7e8f94e86d8efdd631330d"
+};
+// ====== 2) CARTA (editá platos y precios) ======
+const CARTA=[
+{cat:"Entradas",items:[["Empanadas de carne (x3)",4500],["Provoleta",6200],["Tabla de fiambres",11000]]},
+{cat:"Platos",items:[["Milanesa con papas fritas",11500],["Pastas con salsa",9800],["Parrillada para 2",28000],["Pizza muzzarella",9000]]},
+{cat:"Bebidas",items:[["Gaseosa 500 ml",2500],["Agua mineral",2000],["Cerveza 1 L",5500],["Jugo natural",3200]]},
+{cat:"Postres",items:[["Flan casero",3800],["Helado 2 bochas",4000]]}];
+const CANT_MESAS=6;
+
+const $=s=>document.querySelector(s),$$=s=>[...document.querySelectorAll(s)];
+const money=n=>"$"+n.toLocaleString("es-AR");
+const esc=s=>String(s).replace(/[&<>"]/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]));
+firebase.initializeApp(firebaseConfig);
+const auth=firebase.auth(),db=firebase.firestore(),col=db.collection("mscan");
+let rows=[],unsub=null,usr=undefined,listeners=[];
+
+async function save(r){
+  const id=r.id||("r"+Date.now()+Math.random().toString(36).slice(2,6));
+  try{await col.doc(id).set({...r,id});return true}catch(e){console.error(e);return false}
+}
+
+// ====== CLIENTE (solo carta, pedido y llamar al mozo) ======
+function cliente(mesa){
+  const cart={};
+  $("#app").innerHTML=`<h1>🍽️ ${esc(mesa)}</h1><div class="m">Elegí y enviá tu pedido desde acá</div><div id="menu"></div>
+  <h2>Comentarios</h2><textarea id="nt" rows="2" placeholder="Ej: sin cebolla, bien cocido…"></textarea><div id="msg" class="m"></div>
+  <div class="bar"><div class="in"><button class="s" id="call">🔔 Llamar al mozo</button><button id="send">Enviar pedido</button></div></div>`;
+  $("#menu").innerHTML=CARTA.map((g,gi)=>`<h2>${g.cat}</h2>`+g.items.map((it,i)=>`<div class="c r"><div>${esc(it[0])}<div class="m">${money(it[1])}</div></div>
+   <div class="q"><button class="s" data-k="${gi}-${i}" data-d="-1">−</button><b id="n${gi}-${i}">0</b><button data-k="${gi}-${i}" data-d="1">+</button></div></div>`).join("")).join("");
+  const total=()=>Object.entries(cart).reduce((t,[k,q])=>{const[g,i]=k.split("-");return t+CARTA[g].items[i][1]*q},0);
+  const upd=()=>{$("#send").textContent=total()?`Enviar pedido · ${money(total())}`:"Enviar pedido"};
+  $$("[data-k]").forEach(b=>b.onclick=()=>{const k=b.dataset.k;cart[k]=Math.max(0,(cart[k]||0)+ +b.dataset.d);if(!cart[k])delete cart[k];$("#n"+k).textContent=cart[k]||0;upd()});
+  $("#send").onclick=async()=>{
+    if(!total()){$("#msg").textContent="Agregá al menos un plato.";return}
+    const items=Object.entries(cart).map(([k,q])=>{const[g,i]=k.split("-");return{n:CARTA[g].items[i][0],p:CARTA[g].items[i][1],q}});
+    const ok=await save({tipo:"pedido",mesa,items,total:total(),nota:$("#nt").value.trim(),estado:"nuevo",ts:Date.now()});
+    if(!ok){$("#msg").textContent="No se pudo enviar. Probá de nuevo o llamá al mozo.";return}
+    Object.keys(cart).forEach(k=>{delete cart[k];$("#n"+k).textContent=0});$("#nt").value="";upd();
+    $("#msg").textContent="✅ ¡Pedido enviado! Ya le llegó a la cocina.";};
+  $("#call").onclick=async()=>{const ok=await save({tipo:"mozo",mesa,estado:"nuevo",ts:Date.now()});
+    $("#msg").textContent=ok?"🔔 Avisamos al mozo, ya viene.":"No se pudo avisar. Levantá la mano, por favor."};
+}
+
+// ====== PERSONAL: login + panel ======
+let seen=new Set(),first=true;
+function beep(){try{const a=new AudioContext(),o=a.createOscillator();o.connect(a.destination);o.frequency.value=880;o.start();o.stop(a.currentTime+.25)}catch(e){}}
+function staff(){
+  if(usr===undefined){$("#app").innerHTML='<div class="m">Cargando…</div>';return}
+  if(usr)return panel();
+  $("#app").innerHTML=`<h1>Mscan</h1><div class="m">Acceso del personal</div><div class="c" style="margin-top:14px">
+  <input id="em" type="email" placeholder="correo@ejemplo.com"><input id="pw" type="password" placeholder="Contraseña">
+  <div class="r"><span id="er" class="m"></span><button id="go">Entrar</button></div></div>`;
+  const ir=()=>auth.signInWithEmailAndPassword($("#em").value.trim(),$("#pw").value).catch(()=>{$("#er").textContent="Correo o contraseña incorrectos"});
+  $("#go").onclick=ir;$("#pw").onkeydown=e=>{if(e.key==="Enter")ir()};
+}
+function panel(){
+  $("#app").className="w p";
+  $("#app").innerHTML=`<div class="r"><h1>📋 Panel del salón</h1><button class="s" id="out">Salir</button></div><div class="m">Pedidos y llamados en tiempo real</div>
+  <div class="cols"><div><h2>🔔 Llamados al mozo</h2><div id="al"></div></div><div><h2>🧾 Pedidos</h2><div id="pe"></div></div></div>
+  <h2>Links de cada mesa (uno por QR)</h2><div id="ms" style="display:flex;flex-wrap:wrap;gap:8px"></div>`;
+  $("#out").onclick=()=>auth.signOut();
+  const base=location.href.split("#")[0];
+  $("#ms").innerHTML=Array.from({length:CANT_MESAS},(_,i)=>`<a class="b s" href="#mesa=Mesa ${i+1}" target="_blank">Mesa ${i+1}</a>`).join("")+`<div class="m" style="width:100%">Cada QR debe llevar: ${esc(base)}#mesa=Mesa N</div>`;
+  first=true;seen=new Set();
+  unsub=col.onSnapshot(s=>{rows=s.docs.map(d=>d.data());render(rows)},e=>console.error(e));
+  function render(rs){
+    const hora=t=>new Date(t).toLocaleTimeString("es-AR",{hour:"2-digit",minute:"2-digit"});
+    const nuevos=rs.filter(r=>r.estado==="nuevo"&&!seen.has(r.id));rs.forEach(r=>seen.add(r.id));
+    if(!first&&nuevos.length)beep();first=false;
+    const al=rs.filter(r=>r.tipo==="mozo"&&r.estado==="nuevo").sort((a,b)=>a.ts-b.ts);
+    $("#al").innerHTML=al.map(r=>`<div class="c al r"><div><b>${esc(r.mesa)}</b> llama al mozo<div class="m">${hora(r.ts)}</div></div><button class="ok" data-a="${r.id}">Atendida</button></div>`).join("")||'<div class="m">Sin llamados</div>';
+    const pe=rs.filter(r=>r.tipo==="pedido"&&r.estado!=="entregado").sort((a,b)=>a.ts-b.ts);
+    $("#pe").innerHTML=pe.map(r=>`<div class="c"><div class="r"><b>${esc(r.mesa)}</b><span class="tag">${r.estado==="nuevo"?"🆕 Nuevo":"👨‍🍳 En preparación"} · ${hora(r.ts)}</span></div>
+     <ul style="margin:8px 0;padding-left:20px">${r.items.map(i=>`<li>${i.q} × ${esc(i.n)}</li>`).join("")}</ul>${r.nota?`<div class="m">📝 ${esc(r.nota)}</div>`:""}
+     <div class="r" style="margin-top:8px"><b>${money(r.total)}</b>${r.estado==="nuevo"?`<button data-p="${r.id}">Preparar</button>`:`<button class="ok" data-e="${r.id}">Entregado</button>`}</div></div>`).join("")||'<div class="m">Sin pedidos pendientes</div>';
+    const g=id=>rows.find(x=>x.id===id);
+    $$("[data-a]").forEach(b=>b.onclick=()=>save({...g(b.dataset.a),estado:"atendido"}));
+    $$("[data-p]").forEach(b=>b.onclick=()=>save({...g(b.dataset.p),estado:"preparando"}));
+    $$("[data-e]").forEach(b=>b.onclick=()=>save({...g(b.dataset.e),estado:"entregado"}));
+  }
+}
+
+function route(){
+  if(unsub){unsub();unsub=null}
+  $("#app").className="w";const h=decodeURIComponent(location.hash.slice(1));
+  if(h.startsWith("mesa="))cliente(h.slice(5));else staff();
+}
+window.addEventListener("hashchange",route);
+auth.onAuthStateChanged(u=>{usr=u;if(!location.hash.startsWith("#mesa="))route()});
+route();
+</script></body></html>
